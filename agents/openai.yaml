@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude 本地清理助手"
+  short_description: "先检查再确认，清理 Claude 本地缓存与选定登录数据，提供可核验恢复"
+  default_prompt: "请使用 $claude-local-cleanup 检查这台电脑的 Claude 本地数据，列出清理范围与恢复位置，待我确认后执行。"
