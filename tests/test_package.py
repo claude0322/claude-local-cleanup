@@ -30,7 +30,7 @@ class PackageTests(unittest.TestCase):
                 archive.extractall(fixture / "unpacked")
             entry = fixture / "unpacked/claude-local-cleanup/scripts/cleanup.py"
             result = subprocess.run([sys.executable, str(entry), "--help"], capture_output=True)
-            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
 
 
 if __name__ == "__main__":

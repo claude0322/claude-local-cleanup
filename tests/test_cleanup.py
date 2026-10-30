@@ -204,7 +204,14 @@ class CleanupTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "native Windows recovery ACL check")
     def test_windows_recovery_file_acl_is_private(self):
-        receipt = self.apply()
+        run = subprocess.run
+        def checked_run(*args, **kwargs):
+            result = run(*args, **kwargs)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            return result
+        # Only synthetic test paths are involved; expose native failures in CI.
+        with patch.object(c.subprocess, "run", side_effect=checked_run):
+            receipt = self.apply()
         env = dict(os.environ)
         env["CHECK_BATCH"] = str(receipt.parent)
         script = r"""$ErrorActionPreference='Stop';
