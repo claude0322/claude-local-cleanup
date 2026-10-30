@@ -11,14 +11,14 @@ import json
 import os
 from pathlib import Path
 import platform
-import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from safe_io import private_fd, private_paths, rename_noreplace, system_executable
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 SCOPES = ("cache", "code-login", "desktop-login")
 STATE = ".claude-local-cleanup"
 
@@ -187,7 +187,8 @@ def validate_plan(plan, home, system, fresh=True):
     payload = {k: v for k, v in plan.items() if k != "plan_id"}
     if plan.get("plan_id") != seal(payload):
         raise Refused("计划内容已变更，请重新生成")
-    if (plan.get("home"), plan.get("system"), plan.get("version")) != (str(home), system, VERSION):
+    versions = (VERSION,) if fresh else ("1.0.0", VERSION)
+    if (plan.get("home"), plan.get("system")) != (str(home), system) or plan.get("version") not in versions:
         raise Refused("计划不属于当前用户、系统或脚本版本")
     known = {s["relative"]: s for s in targets(home, system)}
     seen = set()
@@ -207,7 +208,7 @@ def validate_plan(plan, home, system, fresh=True):
 def running_clients(system):
     """Inspect names only, never print command lines or environment variables."""
     if system == "Windows":
-        result = subprocess.run(["tasklist.exe", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run([system_executable("tasklist"), "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30)
         if result.returncode:
             raise Refused("无法读取进程列表")
         names = [row[0] for row in csv.reader(io.StringIO(result.stdout)) if row]
@@ -234,27 +235,25 @@ def require_stopped(system):
 
 
 def restrict_directory(path):
-    if os.name != "nt":
-        path.chmod(0o700)
-        return
-    # Set an explicit DACL, rather than retaining inherited grants or trusting chmod.
-    script = r"""$ErrorActionPreference='Stop'; $p=$env:CLEANUP_PRIVATE_DIR;
-$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
-$acl=New-Object System.Security.AccessControl.DirectorySecurity;
-$acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false);
-foreach($id in @($sid,(New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')))) {
-$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule) };
-Set-Acl -LiteralPath $p -AclObject $acl;
-$check=Get-Acl -LiteralPath $p; if(-not $check.AreAccessRulesProtected){throw 'ACL not protected'};
-foreach($rule in $check.Access){$s=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;
-if($s -ne $sid.Value -and $s -ne 'S-1-5-18'){throw 'Unexpected ACL'}}"""
-    # PowerShell 7 -> Python -> Windows PowerShell otherwise inherits incompatible modules.
-    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
-    env["CLEANUP_PRIVATE_DIR"] = str(path)
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                            env=env, capture_output=True, timeout=30)
-    if result.returncode:
-        raise Refused("无法设置或验证恢复目录 ACL；未开始清理")
+    private_paths([path])
+
+
+def private_tree(path, home):
+    paths = []
+
+    def visit(item):
+        safe_path(item, home)
+        info = item.lstat()
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or \
+                (stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
+            raise Refused("恢复资料含链接或特殊文件，停止权限修改")
+        paths.append(item)
+        if stat.S_ISDIR(info.st_mode):
+            for child in item.iterdir():
+                visit(child)
+
+    visit(path)
+    private_paths(paths)
 
 
 def private_dir(path, home):
@@ -268,21 +267,28 @@ def private_dir(path, home):
     restrict_directory(path)
 
 
-def atomic_write(path, data, home, overwrite=True):
+def atomic_write(path, data, home, overwrite=True, staging=None):
     safe_path(path, home)
     if not overwrite and exists(path):
         raise Refused(f"文件已存在：{path}")
-    fd, temporary = tempfile.mkstemp(prefix=".cleanup-", dir=path.parent)
+    staging = safe_path(staging or path.parent, home)
+    fd, temporary = tempfile.mkstemp(prefix=".cleanup-", dir=staging)
     temp = Path(temporary)
     try:
         with os.fdopen(fd, "wb") as stream:
+            if os.name != "nt":
+                private_fd(stream.fileno())
+            elif home / STATE != staging and home / STATE not in staging.parents:
+                # Plan output outside the private recovery tree also stays private.
+                private_paths([temp])
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         safe_path(path, home)
-        if not overwrite and exists(path):
-            raise Refused("输出文件已存在")
-        os.replace(temp, path)
+        if overwrite:
+            os.replace(temp, path)
+        else:
+            rename_noreplace(temp, path)
     finally:
         if temp.exists():
             temp.unlink()
@@ -290,6 +296,30 @@ def atomic_write(path, data, home, overwrite=True):
 
 def save_json(path, value, home, overwrite=True):
     atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8") + b"\n", home, overwrite)
+
+
+def replace_reviewed_json(source, encoded, expected, captured, home):
+    """Retain the live inode, validate it, and publish only into a vacant path.
+
+    A concurrent writer may retain an open descriptor to captured. Keep that
+    file even on success, so later writes are not silently destroyed.
+    """
+    safe_path(source, home)
+    safe_path(captured, home)
+    if snapshot(source, home) != expected:
+        raise Refused("配置已变化，拒绝替换")
+    rename_noreplace(source, captured)
+    private_tree(captured, home)
+    if snapshot(captured, home) != expected:
+        # Restore the newer captured version only if the original path is free.
+        try:
+            rename_noreplace(captured, source)
+        except OSError:
+            pass
+        raise Refused(f"并发修改已保留；请核对原位置与 {captured}")
+    atomic_write(source, encoded, home, overwrite=False, staging=captured.parent)
+    if snapshot(captured, home) != expected:
+        raise Refused(f"检测到并发写入，保留操作前版本：{captured}")
 
 
 @contextlib.contextmanager
@@ -372,25 +402,12 @@ def apply_plan(plan, home, system):
                 action["status"] = "started"
                 save_json(receipt_path, receipt, home)
                 if entry["operation"] == "move":
-                    if exists(backup):
-                        raise Refused("恢复位置已占用")
-                    if os.name == "nt":
-                        # NTFS rename retains the old DACL; copy so every new object
-                        # inherits the restricted recovery directory's permissions.
-                        if source.is_dir():
-                            shutil.copytree(source, backup, symlinks=True, copy_function=shutil.copyfile)
-                        else:
-                            shutil.copyfile(source, backup, follow_symlinks=False)
-                        if snapshot(backup, home) != entry["before"] or snapshot(source, home) != entry["before"]:
-                            raise Refused("Windows 恢复副本或源文件校验失败")
-                        if source.is_dir():
-                            shutil.rmtree(source)
-                        else:
-                            source.unlink()
-                    else:
-                        source.rename(backup)
+                    rename_noreplace(source, backup)
+                    private_tree(backup, home)
                     if snapshot(backup, home) != entry["before"]:
                         raise Refused("移动后校验失败；保留恢复资料")
+                    if exists(source):
+                        raise Refused("原路径出现并发数据，已保留双方资料")
                     action["after"] = None
                 else:
                     data = json_object(source)
@@ -402,7 +419,8 @@ def apply_plan(plan, home, system):
                     atomic_write(staged, encoded, home, overwrite=False)
                     action["after"] = snapshot(staged, home)
                     save_json(receipt_path, receipt, home)
-                    atomic_write(source, encoded, home)
+                    replace_reviewed_json(source, encoded, entry["before"],
+                                          batch / (action["backup"] + ".before-edit"), home)
                     if snapshot(source, home) != action["after"]:
                         raise Refused("配置写入后校验失败")
                 action["status"] = "done"
@@ -443,6 +461,12 @@ def recovery_check(receipt, batch, home):
         entry = action["entry"]
         original = snapshot(home / entry["relative"], home)
         backup = snapshot(batch / action["backup"], home)
+        captured = {}
+        if entry["operation"] == "json":
+            for suffix, expected in ((".before-edit", entry["before"]), (".before-restore", action.get("after"))):
+                captured[suffix] = snapshot(batch / (action["backup"] + suffix), home)
+                if captured[suffix] is not None and captured[suffix] != expected:
+                    raise Refused("保留版本含并发修改；请人工比较，不自动覆盖")
         if original == entry["before"]:
             state = "already-original"
         elif backup != entry["before"]:
@@ -451,6 +475,8 @@ def recovery_check(receipt, batch, home):
             state = "restore"
         elif entry["operation"] == "json" and original == action.get("after") and original is not None:
             state = "restore"
+        elif entry["operation"] == "json" and original is None and any(captured.values()):
+            state = "restore-missing"
         else:
             raise Refused(f"原位置已有新数据，拒绝覆盖：{home / entry['relative']}")
         states.append(state)
@@ -467,25 +493,36 @@ def restore(path, home, system):
     require_stopped(system)
     with operation_lock(home):
         receipt = load_receipt(path, home, system)
+        private_tree(path.parent, home)
         states = recovery_check(receipt, path.parent, home)
-        for action, state in zip(receipt["actions"], states):
-            if state == "already-original":
-                continue
-            entry = action["entry"]
-            source, backup = home / entry["relative"], path.parent / action["backup"]
-            safe_path(source.parent, home)
-            if not source.parent.is_dir():
-                raise Refused("原父目录不再存在，需人工恢复")
-            # Recheck immediately before each write; never overwrite new user work.
-            recovery_check({"actions": [action]}, path.parent, home)
-            if entry["operation"] == "move":
-                backup.rename(source)
-            else:
-                atomic_write(source, backup.read_bytes(), home)
-            if snapshot(source, home) != entry["before"]:
-                raise Refused("恢复后校验失败")
-            action["status"] = "restored"
+        try:
+            for action, state in zip(receipt["actions"], states):
+                if state == "already-original":
+                    continue
+                entry = action["entry"]
+                source, backup = home / entry["relative"], path.parent / action["backup"]
+                safe_path(source.parent, home)
+                if not source.parent.is_dir():
+                    raise Refused("原父目录不再存在，需人工恢复")
+                state = recovery_check({"actions": [action]}, path.parent, home)[0]
+                action["status"] = "restore-started"
+                save_json(path, receipt, home)
+                if entry["operation"] == "move":
+                    rename_noreplace(backup, source)
+                elif state == "restore-missing":
+                    atomic_write(source, backup.read_bytes(), home, overwrite=False, staging=path.parent)
+                else:
+                    replace_reviewed_json(source, backup.read_bytes(), action["after"],
+                                          path.parent / (action["backup"] + ".before-restore"), home)
+                if snapshot(source, home) != entry["before"]:
+                    raise Refused("恢复后校验失败")
+                action["status"] = "restored"
+                save_json(path, receipt, home)
+        except (Exception, KeyboardInterrupt) as exc:
+            receipt["status"] = "restore-partial"
+            receipt["error"] = type(exc).__name__
             save_json(path, receipt, home)
+            raise Refused(f"恢复中止；并发资料与恢复记录保留于 {path.parent}") from None
         receipt["status"] = "restored"
         save_json(path, receipt, home)
     print(f"恢复完成：{path}")
@@ -554,7 +591,7 @@ def main(argv=None):
                 receipt = load_receipt(source, home, system)
                 states = recovery_check(receipt, source.parent, home)
                 print(json.dumps({"status": receipt["status"], "recovery_states": states,
-                                  "meaning": "restore 表示已清理且可恢复；already-original 表示原数据在原处"}, ensure_ascii=False, indent=2))
+                                  "meaning": "restore/restore-missing 表示可恢复；already-original 表示原数据在原处"}, ensure_ascii=False, indent=2))
         return 0
     except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         # Never render JSON fragments or subprocess output that might contain credentials.
