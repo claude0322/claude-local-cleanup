@@ -48,12 +48,12 @@ class CleanupTests(unittest.TestCase):
         return c.apply_plan(plan or self.plan(), self.home, self.system)
 
     def test_apply_preserves_non_targets_and_restore_round_trip(self):
-        before = {str(p.relative_to(self.home)): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
+        before = {p.relative_to(self.home).as_posix(): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         receipt = self.apply()
         self.assertFalse((self.home / ".claude/cache").exists())
         self.assertFalse((self.home / self.desktop / "Cookies").exists())
-        self.assertEqual(json.loads((self.home / ".claude/.credentials.json").read_text()), {"otherProvider": "retain"})
-        account = json.loads((self.home / ".claude.json").read_text())
+        self.assertEqual(json.loads((self.home / ".claude/.credentials.json").read_text(encoding="utf-8")), {"otherProvider": "retain"})
+        account = json.loads((self.home / ".claude.json").read_text(encoding="utf-8"))
         self.assertNotIn("oauthAccount", account)
         self.assertEqual(account["userID"], "keep-id")
         for rel in (".claude/projects/keep/session.json", ".claude/settings.json", ".claude/skills/test/SKILL.md", self.desktop + "/sessions/keep", self.desktop + "/claude_desktop_config.json"):
@@ -64,7 +64,7 @@ class CleanupTests(unittest.TestCase):
 
     def test_default_scope_leaves_login(self):
         self.apply(self.plan(["cache"]))
-        self.assertIn("oauthAccount", json.loads((self.home / ".claude.json").read_text()))
+        self.assertIn("oauthAccount", json.loads((self.home / ".claude.json").read_text(encoding="utf-8")))
         self.assertTrue((self.home / self.desktop / "Cookies").exists())
 
     def test_changed_file_invalidates_plan(self):
@@ -139,7 +139,7 @@ class CleanupTests(unittest.TestCase):
 
     def test_corrupt_backup_blocks_restore(self):
         receipt = self.apply()
-        data = json.loads(receipt.read_text())
+        data = json.loads(receipt.read_text(encoding="utf-8"))
         item = next(a for a in data["actions"] if a["entry"]["operation"] == "json")
         (receipt.parent / item["backup"]).write_bytes(b"corrupt")
         with self.assertRaises(c.Refused):
@@ -155,7 +155,7 @@ class CleanupTests(unittest.TestCase):
             with self.assertRaises(c.Refused):
                 self.apply()
         self.assertTrue((self.home / ".claude/cache/item").exists())
-        self.assertIn("oauthAccount", json.loads((self.home / ".claude.json").read_text()))
+        self.assertIn("oauthAccount", json.loads((self.home / ".claude.json").read_text(encoding="utf-8")))
 
     def test_partial_failure_has_receipt_and_can_restore(self):
         actual = c.atomic_write
@@ -168,7 +168,7 @@ class CleanupTests(unittest.TestCase):
             with self.assertRaises(c.Refused):
                 self.apply(plan)
         receipt = c.batch_path(self.home, plan) / "receipt.json"
-        self.assertEqual(json.loads(receipt.read_text())["status"], "partial")
+        self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["status"], "partial")
         c.restore(receipt, self.home, self.system)
         self.assertTrue((self.home / ".claude/cache/item").exists())
 
@@ -187,7 +187,7 @@ class CleanupTests(unittest.TestCase):
 
     def test_receipt_cannot_redirect_backup(self):
         receipt = self.apply()
-        data = json.loads(receipt.read_text())
+        data = json.loads(receipt.read_text(encoding="utf-8"))
         data["actions"][0]["backup"] = "../../outside"
         receipt.write_text(json.dumps(data))
         with self.assertRaises(c.Refused):
