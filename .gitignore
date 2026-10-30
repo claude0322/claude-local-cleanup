@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+.venv/
+.claude-local-cleanup/
+*cleanup-plan*.json
+*login-plan*.json
+receipt.json
+*.original
+*.edited
+*.log
