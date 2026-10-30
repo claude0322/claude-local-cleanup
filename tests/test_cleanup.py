@@ -212,7 +212,7 @@ class CleanupTests(unittest.TestCase):
         # Only synthetic test paths are involved; expose native failures in CI.
         with patch.object(c.subprocess, "run", side_effect=checked_run):
             receipt = self.apply()
-        env = dict(os.environ)
+        env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
         env["CHECK_BATCH"] = str(receipt.parent)
         script = r"""$ErrorActionPreference='Stop';
 $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
