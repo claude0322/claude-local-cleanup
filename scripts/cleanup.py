@@ -27,6 +27,13 @@ class Refused(Exception):
     """An operation cannot be performed without changing the reviewed scope."""
 
 
+def configure_output():
+    """Keep Chinese output usable when Windows redirects to a legacy code page."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def encode(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -241,7 +248,8 @@ Set-Acl -LiteralPath $p -AclObject $acl;
 $check=Get-Acl -LiteralPath $p; if(-not $check.AreAccessRulesProtected){throw 'ACL not protected'};
 foreach($rule in $check.Access){$s=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;
 if($s -ne $sid.Value -and $s -ne 'S-1-5-18'){throw 'Unexpected ACL'}}"""
-    env = dict(os.environ)
+    # PowerShell 7 -> Python -> Windows PowerShell otherwise inherits incompatible modules.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
     env["CLEANUP_PRIVATE_DIR"] = str(path)
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                             env=env, capture_output=True, timeout=30)
@@ -484,6 +492,7 @@ def restore(path, home, system):
 
 
 def main(argv=None):
+    configure_output()
     parser = argparse.ArgumentParser(description="Claude 本地清理助手：audit → plan → apply → restore")
     parser.add_argument("--version", action="version", version=VERSION)
     subs = parser.add_subparsers(dest="command", required=True)

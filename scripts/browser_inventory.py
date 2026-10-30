@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import platform
 import re
-from cleanup import Refused, exists, safe_path
+from cleanup import Refused, configure_output, exists, safe_path
 
 
 def inventory(home, system):
@@ -71,4 +71,5 @@ def inventory(home, system):
 
 
 if __name__ == "__main__":
+    configure_output()
     print(json.dumps(inventory(Path.home().resolve(), platform.system()), ensure_ascii=False, indent=2))

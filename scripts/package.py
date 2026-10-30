@@ -20,11 +20,12 @@ def build(root):
             if source.is_symlink() or not source.is_file():
                 raise ValueError("Missing or linked package source: " + name)
             info = zipfile.ZipInfo("claude-local-cleanup/" + name, (2026, 1, 1, 0, 0, 0))
+            info.create_system = 3
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, source.read_bytes())
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-    destination.with_suffix(".zip.sha256").write_text(f"{digest}  {destination.name}\n", encoding="ascii")
+    destination.with_suffix(".zip.sha256").write_bytes(f"{digest}  {destination.name}\n".encode("ascii"))
     print(f"Built {destination.name} ({len(FILES)} files); SHA256 {digest}")
     return destination
 
