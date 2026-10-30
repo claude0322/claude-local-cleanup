@@ -20,7 +20,7 @@
 | 缓存清理 | 默认只选 Claude Code 与 Desktop 的可再生缓存 |
 | Code 登录字段 | 可选移除两个已知 JSON 账号键，保留其他配置 |
 | Desktop 网站存储 | 可选处理 Cookies、Local Storage 等已知子目录，不整删应用目录 |
-| 恢复 | 完整性校验、部分失败记录；遇到新数据拒绝覆盖 |
+| 恢复 | 完整性校验、部分失败记录；独占移动与保留版本，检测到冲突时停止 |
 | 浏览器 | 盘点 Chrome / Edge / Brave / Firefox 配置；Safari 使用原生设置；按指南逐配置清理 |
 | CC Switch | 人工审阅流程，不自动改写混合数据库 |
 
@@ -77,6 +77,8 @@ python3 scripts/cleanup.py restore /完整路径/receipt.json
 
 恢复需输入 `RESTORE <前12位计划编号>`。原位置出现新数据时停止并保留双方资料，详见[恢复说明](references/recovery.md)。副本可能包含旧登录信息，留在本机，不要上传到仓库或 Issue。
 
+1.0.1 加固了 macOS ACL、Windows 系统命令路径与并发文件操作。JSON 更新会保留操作前的原文件；若程序重新启动或持有旧文件句柄继续写入，变更可能留在恢复目录的保留版本中，需要人工比较。操作期间仍须保持客户端退出。旧版计划需重新生成，1.0.0 的恢复记录仍可读取和恢复。
+
 ## 维护与测试
 
 ```bash
@@ -84,7 +86,7 @@ python3 -m unittest discover -s tests -v
 python3 scripts/package.py
 ```
 
-测试使用临时目录和虚构凭据，覆盖确认拒绝、路径链接、目标变化、字段保留、备份失败、部分失败、恢复冲突和打包边界。CI 配置为 macOS / Windows / Linux、Python 3.10 / 3.13；Linux 仅运行隔离测试，不启用客户端写入。Windows CI 另检查 NTFS junction。
+测试使用临时目录和虚构凭据，覆盖确认拒绝、路径链接、目标变化、字段保留、备份失败、部分失败、恢复冲突和打包边界，并模拟检查后发生的并发写入。CI 配置为 macOS / Windows / Linux、Python 3.10 / 3.13；Linux 仅运行隔离测试，不启用客户端写入。原生测试另检查 macOS ACL 继承、Windows NTFS junction、恢复文件 ACL 与系统命令路径。CI Action 固定到完整提交哈希。
 
 测试通过不表示覆盖每个客户端版本。反馈请提供系统、脚本版本、脱敏错误类型和复现步骤，不附凭据、Cookie、完整配置或恢复副本。
 

@@ -196,7 +196,7 @@ class CleanupTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "native Windows junction check")
     def test_windows_junction_is_rejected(self):
         link = self.home / ".claude/cache/junction"
-        result = subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(link), str(self.home / ".claude/projects")], capture_output=True)
+        result = subprocess.run([c.system_executable("cmd"), "/c", "mklink", "/J", str(link), str(self.home / ".claude/projects")], capture_output=True)
         self.assertEqual(result.returncode, 0)
         self.addCleanup(lambda: os.rmdir(link) if link.exists() else None)
         with self.assertRaises(c.Refused):
@@ -220,7 +220,7 @@ foreach($item in (Get-ChildItem -LiteralPath $env:CHECK_BATCH -Recurse -Force)) 
 foreach($rule in (Get-Acl -LiteralPath $item.FullName).Access) {
 $id=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;
 if($id -ne $sid -and $id -ne 'S-1-5-18'){throw 'Unexpected recovery access'}}}"""
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], env=env, capture_output=True)
+        result = subprocess.run([c.system_executable("powershell"), "-NoProfile", "-NonInteractive", "-Command", script], env=env, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
 
 

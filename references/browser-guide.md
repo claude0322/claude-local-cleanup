@@ -2,6 +2,8 @@
 
 `browser_inventory.py` 只列当前用户的已知配置路径，不打开 Cookie 或密码数据库，不执行删除。自定义配置可能未列出；`unreadable-or-unsupported` 不能当作“没有数据”。
 
+盘点会读取 Chromium 的 `Local State` 和 Firefox 的 `profiles.ini` 元数据。`Local State` 可能含账号邮箱等信息；脚本仅使用 Profile 名称，不输出账号邮箱，也不上传这些数据。
+
 ## 逐个配置处理
 
 Chrome / Edge / Brave 的 Profile 是独立配置；网页内切换账号不等于切换 Profile。先把盘点路径与配置菜单对应。Firefox 核对配置管理页，Safari 核对个人资料。

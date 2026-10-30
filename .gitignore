@@ -10,4 +10,6 @@ __pycache__/
 receipt.json
 *.original
 *.edited
+*.before-edit
+*.before-restore
 *.log

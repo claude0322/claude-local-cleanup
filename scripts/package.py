@@ -7,7 +7,7 @@ import zipfile
 FILES = (
     "SKILL.md", "README.md", "LICENSE", "CHANGELOG.md", "agents/openai.yaml",
     "references/browser-guide.md", "references/recovery.md", "references/sources.md",
-    "references/cc-switch.md", "scripts/cleanup.py", "scripts/browser_inventory.py",
+    "references/cc-switch.md", "scripts/cleanup.py", "scripts/browser_inventory.py", "scripts/safe_io.py",
 )
 
 

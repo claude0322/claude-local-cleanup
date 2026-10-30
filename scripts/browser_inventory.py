@@ -67,7 +67,7 @@ def inventory(home, system):
     if system == "Darwin":
         rows.append({"browser": "Safari", "status": "use-native-settings", "note": "在 Safari 设置中逐个核对个人资料与网站数据"})
     return {"system": system, "profiles": rows,
-            "limits": "仅列已知默认位置；自定义目录、其他系统用户和未识别浏览器不在覆盖范围。未读取 Cookie、密码或账号邮箱；未执行清理。"}
+            "limits": "仅列已知默认位置；自定义目录、其他系统用户和未识别浏览器不在覆盖范围。读取配置元数据以列出 Profile，不输出账号邮箱，不打开 Cookie 或密码数据库；未执行清理。"}
 
 
 if __name__ == "__main__":
